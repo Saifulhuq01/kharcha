@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lime coin with an ink "K" -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#C6F432"
+        android:pathData="M54,24a30,30 0 1,1 0,60a30,30 0 1,1 0,-60z" />
+    <path
+        android:fillColor="#0E1013"
+        android:pathData="M42,39h7v30h-7z M49,52L62,39h9L55,56z M53,52L71,69h-9L49,57z" />
+</vector>

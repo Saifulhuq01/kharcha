@@ -1,0 +1,26 @@
+# Build output
+/build
+/app/build
+*.apk
+*.aab
+
+# Gradle
+.gradle/
+.kotlin/
+
+# Machine-specific (each developer has their own SDK path)
+local.properties
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Signing keys — never commit these
+*.jks
+*.keystore
+keystore.properties
