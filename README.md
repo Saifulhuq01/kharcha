@@ -54,20 +54,43 @@ Kharcha reads sensitive things (your SMS and notifications), so here is exactly 
 
 ## Install
 
-1. Download `Kharcha.apk` from the [Releases](../../releases) page.
-2. Open it on your phone and allow *Install unknown apps* when asked.
-3. Open Kharcha and finish the **Turn on auto-capture** card:
-   - **Read bank SMS**: logs every debit alert
-   - **Payment notifications**: GPay, PhonePe, Paytm, BHIM
-   - **Usage access**: knows when you leave a payment app
-   - **Show over other apps**: for the "how much?" pop-up
+Download `Kharcha.apk` from the [Releases](../../releases) page. **Requires Android 8.0 or newer.**
 
-   The card disappears once all four are on, and the header shows **Auto-capture on**.
+> **⚠️ In India and some other countries, Play Protect blocks this install.**
+> Google's fraud protection automatically blocks any app installed from a browser, file manager
+> or chat app if it asks to read SMS or notifications. Kharcha needs both to work.
+> You'll see *"App blocked to protect your device"* with only an **OK** button; there is no
+> "Install anyway". This is a permission rule, not a malware finding: the full source is right
+> here for you to check. Use one of the two options below.
+
+**Option A: install over USB (recommended, keeps Play Protect on)**
+
+1. On the phone, turn on *Developer options* and then *USB debugging*.
+2. Connect it to a computer that has [Android platform-tools](https://developer.android.com/tools/releases/platform-tools) and run:
+   ```bash
+   adb install Kharcha.apk
+   ```
+
+**Option B: turn Play Protect off just for the install**
+
+1. Play Store → your profile icon → **Play Protect** → ⚙️ → turn off **Scan apps with Play Protect**.
+2. Open `Kharcha.apk` and install it (allow *Install unknown apps* if asked).
+3. **Turn Scan apps with Play Protect back on straight away.** While it's off your phone is less
+   protected, so don't install anything else in between.
+
+Where the block doesn't apply, step 2 of Option B on its own is enough.
+
+**Then finish setup.** Open Kharcha and complete the **Turn on auto-capture** card:
+
+- **Read bank SMS**: logs every debit alert
+- **Payment notifications**: GPay, PhonePe, Paytm, BHIM
+- **Usage access**: knows when you leave a payment app
+- **Show over other apps**: for the "how much?" pop-up
+
+The card disappears once all four are on, and the header shows **Auto-capture on**.
 
 > **Why not on the Play Store?** Google only allows SMS permissions for default SMS apps,
 > so an app like this has to be installed directly.
-
-**Requirements:** Android 8.0 (API 26) or newer.
 
 ## Build from source
 
