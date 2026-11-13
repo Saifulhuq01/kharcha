@@ -16,8 +16,18 @@ class ExpenseViewModel(app: Application) : AndroidViewModel(app) {
     val expenses: StateFlow<List<Expense>> =
         dao.getAllExpenses().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    fun addExpense(amount: Double, category: String, note: String?) {
-        viewModelScope.launch { dao.insert(Expense(amount = amount, category = category, note = note)) }
+    fun addExpense(amount: Double, category: String, note: String?, timestamp: Long = System.currentTimeMillis()) {
+        viewModelScope.launch {
+            dao.insert(Expense(amount = amount, category = category, note = note, timestamp = timestamp))
+        }
+    }
+
+    fun findMissingSms(onResult: (List<SmsCandidate>) -> Unit) {
+        viewModelScope.launch { onResult(SmsScanner.findMissing(getApplication())) }
+    }
+
+    fun addFromSms(picked: List<SmsCandidate>) {
+        viewModelScope.launch { SmsScanner.addCandidates(getApplication(), picked) }
     }
 
     fun updateExpense(expense: Expense) {

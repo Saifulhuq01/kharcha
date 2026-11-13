@@ -17,10 +17,13 @@ object ExpenseExporter {
         val rows = AppDatabase.get(context).expenseDao().getAllOnce()
         val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
 
-        val sb = StringBuilder("Date,Amount,Category,Source,Merchant,Note\n")
+        // Amount = what the spend really cost; Paid + Extra show how it was made up.
+        val sb = StringBuilder("Date,Amount,Paid,Extra,Category,Source,Merchant,Note\n")
         for (e in rows) {
             sb.append(fmt.format(Date(e.timestamp))).append(',')
+                .append(e.total).append(',')
                 .append(e.amount).append(',')
+                .append(e.extra).append(',')
                 .append(csv(e.category)).append(',')
                 .append(csv(e.source)).append(',')
                 .append(csv(e.merchant ?: "")).append(',')

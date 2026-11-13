@@ -16,14 +16,21 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -33,11 +40,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.text.SimpleDateFormat
-import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -78,16 +85,27 @@ fun HomeScreen(vm: ExpenseViewModel, setup: SetupState, onPermsChanged: () -> Un
     val expenses by vm.expenses.collectAsStateWithLifecycle()
     var showAdd by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Expense?>(null) }
+    var missing by remember { mutableStateOf<List<SmsCandidate>?>(null) }
+    val openMonths = remember { mutableStateMapOf<Long, Boolean>() }
     val permLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { onPermsChanged() }
 
-    val monthStart = remember { startOfMonth() }
-    val monthItems = expenses.filter { it.timestamp >= monthStart }
-    val split = monthItems.groupBy { it.category }
-        .map { (name, list) -> name to list.sumOf { it.amount } }
-        .sortedByDescending { it.second }
-    val days = expenses.groupBy { startOfDay(it.timestamp) }
+    val months = groupByMonth(expenses)
+    val thisMonth = startOfMonth()
+    val current = months.firstOrNull { it.first == thisMonth }?.second.orEmpty()
+    val past = months.filter { it.first != thisMonth }
+
+    fun rescan() {
+        if (!setup.sms) {
+            permLauncher.launch(smsPerms())
+            return
+        }
+        vm.findMissingSms { found ->
+            if (found.isEmpty()) Toast.makeText(ctx, "Every bank SMS is already in Kharcha", Toast.LENGTH_SHORT).show()
+            else missing = found
+        }
+    }
 
     Scaffold(
         containerColor = Ink,
@@ -110,7 +128,9 @@ fun HomeScreen(vm: ExpenseViewModel, setup: SetupState, onPermsChanged: () -> Un
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             item { Header(autoOn = setup.all) }
-            item { HeroCard(monthItems.sumOf { it.amount }, expenses.sumOf { it.amount }, monthItems.size, split) }
+            item {
+                HeroCard(current.sumOf { it.total }, expenses.sumOf { it.total }, current.size, categorySplit(current))
+            }
 
             if (!setup.all) item {
                 SetupCard(
@@ -128,24 +148,30 @@ fun HomeScreen(vm: ExpenseViewModel, setup: SetupState, onPermsChanged: () -> Un
 
             item {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Pill("↻  Rescan SMS", Modifier.weight(1f)) {
-                        if (!setup.sms) permLauncher.launch(smsPerms())
-                        else vm.scanSms { n ->
-                            val msg = if (n == 0) "No new bank SMS" else "Added $n from SMS"
-                            Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
-                        }
-                    }
+                    Pill("↻  Rescan SMS", Modifier.weight(1f)) { rescan() }
                     Pill("↗  Export CSV", Modifier.weight(1f)) {
                         vm.exportCsv { ctx.startActivity(Intent.createChooser(it, "Export expenses")) }
                     }
                 }
             }
 
-            if (expenses.isEmpty()) item { EmptyState() }
+            // This month, in full.
+            when {
+                expenses.isEmpty() -> item { EmptyState() }
+                current.isEmpty() -> item { QuietNote("Nothing spent this month yet") }
+                else -> dayGroups(current, keyPrefix = "now") { editing = it }
+            }
 
-            days.forEach { (day, list) ->
-                item(key = "day-$day") { DayHeader(dayLabel(day), list.sumOf { it.amount }) }
-                items(list, key = { it.id }) { e -> TxnRow(e) { editing = e } }
+            // Earlier months, each folded into one card until tapped.
+            if (past.isNotEmpty()) {
+                item { SectionTitle("Earlier months") }
+                past.forEach { (month, list) ->
+                    val open = openMonths[month] == true
+                    item(key = "month-$month") {
+                        MonthCard(month, list, open) { openMonths[month] = !open }
+                    }
+                    if (open) dayGroups(list, keyPrefix = "m$month") { editing = it }
+                }
             }
         }
     }
@@ -153,7 +179,21 @@ fun HomeScreen(vm: ExpenseViewModel, setup: SetupState, onPermsChanged: () -> Un
     if (showAdd) {
         AddSheet(
             onDismiss = { showAdd = false },
-            onSave = { amount, category, note -> vm.addExpense(amount, category, note); showAdd = false }
+            onSave = { amount, category, note, time ->
+                vm.addExpense(amount, category, note, time)
+                showAdd = false
+            }
+        )
+    }
+    missing?.let { found ->
+        RescanSheet(
+            found,
+            onDismiss = { missing = null },
+            onAdd = { picked ->
+                vm.addFromSms(picked)
+                missing = null
+                Toast.makeText(ctx, "Added ${picked.size} from SMS", Toast.LENGTH_SHORT).show()
+            }
         )
     }
     editing?.let { e ->
@@ -163,6 +203,14 @@ fun HomeScreen(vm: ExpenseViewModel, setup: SetupState, onPermsChanged: () -> Un
             onSave = { vm.updateExpense(it); editing = null },
             onDelete = { vm.deleteExpense(e); editing = null }
         )
+    }
+}
+
+// Spends grouped under day headers ("Today", "Yesterday", "Wed, 11 Nov").
+fun LazyListScope.dayGroups(list: List<Expense>, keyPrefix: String, onTap: (Expense) -> Unit) {
+    list.groupBy { startOfDay(it.timestamp) }.forEach { (day, items) ->
+        item(key = "$keyPrefix-day-$day") { DayHeader(dayLabel(day), items.sumOf { it.total }) }
+        items(items, key = { it.id }) { e -> TxnRow(e) { onTap(e) } }
     }
 }
 
@@ -190,7 +238,6 @@ fun Header(autoOn: Boolean) {
 @Composable
 fun HeroCard(monthTotal: Double, allTotal: Double, count: Int, split: List<Pair<String, Double>>) {
     val monthName = remember { SimpleDateFormat("MMMM", Locale.getDefault()).format(Date()) }
-    val total = split.sumOf { it.second }
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(Panel).padding(22.dp)) {
         Text("Spent in $monthName", style = MaterialTheme.typography.labelLarge, color = Muted)
         Spacer(Modifier.height(4.dp))
@@ -201,39 +248,104 @@ fun HeroCard(monthTotal: Double, allTotal: Double, count: Int, split: List<Pair<
             color = Muted
         )
         Spacer(Modifier.height(18.dp))
-
-        // One bar, split by category colour.
-        Row(Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(5.dp)).background(Panel2)) {
-            if (total > 0) split.forEach { (name, v) ->
-                Box(
-                    Modifier.weight((v / total).toFloat().coerceAtLeast(0.01f))
-                        .fillMaxHeight()
-                        .background(cat(name).color)
-                )
-            }
-        }
-
-        if (total > 0) {
+        SplitBar(split, 10.dp)
+        if (split.isNotEmpty()) {
             Spacer(Modifier.height(12.dp))
-            split.take(4).forEach { (name, v) ->
-                val k = cat(name)
-                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(10.dp).clip(CircleShape).background(k.color))
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        "${k.emoji}  ${k.name}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = TextMain,
-                        modifier = Modifier.weight(1f)
-                    )
-                    val pct = v / total * 100
-                    Text(if (pct < 1) "<1%" else "${pct.toInt()}%", style = MaterialTheme.typography.bodySmall, color = Muted)
-                    Spacer(Modifier.width(12.dp))
-                    Text(money(v), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = TextMain)
-                }
-            }
+            CategoryLegend(split.take(4))
         }
     }
+}
+
+// One bar, split by category colour.
+@Composable
+fun SplitBar(split: List<Pair<String, Double>>, height: Dp) {
+    val total = split.sumOf { it.second }
+    Row(Modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(height / 2)).background(Panel2)) {
+        if (total > 0) split.forEach { (name, v) ->
+            Box(
+                Modifier.weight((v / total).toFloat().coerceAtLeast(0.01f))
+                    .fillMaxHeight()
+                    .background(cat(name).color)
+            )
+        }
+    }
+}
+
+@Composable
+fun CategoryLegend(split: List<Pair<String, Double>>) {
+    val total = split.sumOf { it.second }.coerceAtLeast(0.01)
+    split.forEach { (name, v) ->
+        val k = cat(name)
+        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(10.dp).clip(CircleShape).background(k.color))
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "${k.emoji}  ${k.name}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextMain,
+                modifier = Modifier.weight(1f)
+            )
+            val pct = v / total * 100
+            Text(if (pct < 1) "<1%" else "${pct.toInt()}%", style = MaterialTheme.typography.bodySmall, color = Muted)
+            Spacer(Modifier.width(12.dp))
+            Text(money(v), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = TextMain)
+        }
+    }
+}
+
+// A past month folded into one card. Tap to open its breakdown and list.
+@Composable
+fun MonthCard(month: Long, list: List<Expense>, open: Boolean, onToggle: () -> Unit) {
+    val split = categorySplit(list)
+    Column(
+        Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(22.dp))
+            .background(Panel)
+            .clickable(onClick = onToggle)
+            .padding(18.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(monthLabel(month), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = TextMain)
+                Text("${list.size} spends", style = MaterialTheme.typography.bodySmall, color = Muted)
+            }
+            Text(money(list.sumOf { it.total }), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = TextMain)
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                if (open) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                contentDescription = if (open) "Collapse" else "Expand",
+                tint = Muted
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        SplitBar(split, 6.dp)
+        if (open) {
+            Spacer(Modifier.height(10.dp))
+            CategoryLegend(split)
+        }
+    }
+}
+
+@Composable
+fun SectionTitle(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.Bold,
+        color = Muted,
+        modifier = Modifier.padding(start = 4.dp, top = 18.dp, bottom = 2.dp)
+    )
+}
+
+@Composable
+fun QuietNote(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodyMedium,
+        color = Muted,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 20.dp)
+    )
 }
 
 @Composable
@@ -343,12 +455,22 @@ fun TxnRow(e: Expense, onClick: () -> Unit) {
                 Text(time, style = MaterialTheme.typography.bodySmall, color = Muted)
             }
         }
-        Text(
-            "−" + money(e.amount),
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-            color = TextMain
-        )
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                "−" + money(e.total),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = TextMain
+            )
+            // Show the split when something was added on top, e.g. "₹160 + ₹100".
+            if (e.extra > 0) {
+                Text(
+                    "${money(e.amount)} + ${money(e.extra)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Lime
+                )
+            }
+        }
     }
 }
 
@@ -376,10 +498,13 @@ fun EmptyState() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AddSheet(onDismiss: () -> Unit, onSave: (Double, String, String?) -> Unit) {
+fun AddSheet(onDismiss: () -> Unit, onSave: (Double, String, String?, Long) -> Unit) {
     var amount by remember { mutableStateOf("") }
     var category by remember { mutableStateOf("Food") }
     var note by remember { mutableStateOf("") }
+    val today = remember { startOfDay(System.currentTimeMillis()) }
+    var day by remember { mutableStateOf(today) }
+    var pickingDate by remember { mutableStateOf(false) }
     val value = amount.toDoubleOrNull()
 
     ModalBottomSheet(
@@ -388,7 +513,23 @@ fun AddSheet(onDismiss: () -> Unit, onSave: (Double, String, String?) -> Unit) {
         containerColor = Panel
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp).padding(bottom = 28.dp).imePadding()) {
-            Text("New expense", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = TextMain)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "New expense",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = TextMain,
+                    modifier = Modifier.weight(1f)
+                )
+                Surface(onClick = { pickingDate = true }, shape = RoundedCornerShape(12.dp), color = Panel2) {
+                    Text(
+                        "📅  ${dayLabel(day)}",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = TextMain,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    )
+                }
+            }
             Spacer(Modifier.height(16.dp))
             AmountField(amount) { amount = it }
             Spacer(Modifier.height(14.dp))
@@ -405,7 +546,13 @@ fun AddSheet(onDismiss: () -> Unit, onSave: (Double, String, String?) -> Unit) {
             )
             Spacer(Modifier.height(18.dp))
             Button(
-                onClick = { if (value != null && value > 0) onSave(value, category, note.ifBlank { null }) },
+                onClick = {
+                    if (value != null && value > 0) {
+                        // Today keeps the real time; a past day is filed at midday.
+                        val time = if (day == today) System.currentTimeMillis() else day + 12 * 3_600_000L
+                        onSave(value, category, note.ifBlank { null }, time)
+                    }
+                },
                 enabled = value != null && value > 0,
                 colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = Ink),
                 shape = RoundedCornerShape(16.dp),
@@ -413,25 +560,202 @@ fun AddSheet(onDismiss: () -> Unit, onSave: (Double, String, String?) -> Unit) {
             ) { Text("Save", fontWeight = FontWeight.Bold) }
         }
     }
+
+    if (pickingDate) {
+        val state = rememberDatePickerState(
+            initialSelectedDateMillis = localDayToUtcDate(day),
+            selectableDates = object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long) = utcDateToLocalDay(utcTimeMillis) <= today
+            }
+        )
+        val colors = DatePickerDefaults.colors(
+            containerColor = Panel,
+            selectedDayContainerColor = Lime,
+            selectedDayContentColor = Ink,
+            todayDateBorderColor = Lime,
+            todayContentColor = Lime
+        )
+        DatePickerDialog(
+            onDismissRequest = { pickingDate = false },
+            colors = colors,
+            confirmButton = {
+                TextButton(onClick = {
+                    state.selectedDateMillis?.let { day = utcDateToLocalDay(it) }
+                    pickingDate = false
+                }) { Text("OK", color = Lime, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { TextButton(onClick = { pickingDate = false }) { Text("Cancel", color = Muted) } }
+        ) { DatePicker(state = state, colors = colors) }
+    }
+}
+
+// Rescan result: bank SMS not in Kharcha (including deleted ones). Tick the ones to add.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun RescanSheet(found: List<SmsCandidate>, onDismiss: () -> Unit, onAdd: (List<SmsCandidate>) -> Unit) {
+    val picked = remember { mutableStateListOf<SmsCandidate>() }
+    val allPicked = picked.size == found.size
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = Panel
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 22.dp).padding(bottom = 24.dp)) {
+            Text("Add from SMS", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = TextMain)
+            Spacer(Modifier.height(2.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "${found.size} bank SMS aren't in Kharcha. Tick the ones to add.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Muted,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = {
+                    picked.clear()
+                    if (!allPicked) picked.addAll(found)
+                }) { Text(if (allPicked) "Clear" else "Select all", color = Lime) }
+            }
+            Spacer(Modifier.height(6.dp))
+            LazyColumn(
+                modifier = Modifier.heightIn(max = 440.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(found, key = { "${it.timestamp}-${it.amount}" }) { c ->
+                    val on = c in picked
+                    CandidateRow(c, on) { if (on) picked.remove(c) else picked.add(c) }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            Button(
+                onClick = { onAdd(picked.toList()) },
+                enabled = picked.isNotEmpty(),
+                colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = Ink),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth().height(54.dp)
+            ) {
+                Text(
+                    if (picked.isEmpty()) "Tick the spends to add"
+                    else "Add ${picked.size} · ${money(picked.sumOf { it.amount })}",
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
 }
 
 @Composable
+fun CandidateRow(c: SmsCandidate, checked: Boolean, onToggle: () -> Unit) {
+    val whenText = remember(c.timestamp) {
+        SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(c.timestamp))
+    }
+    Row(
+        Modifier.fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (checked) Lime.copy(alpha = 0.10f) else Panel2)
+            .clickable(onClick = onToggle)
+            .padding(end = 12.dp, top = 4.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Checkbox(
+            checked = checked,
+            onCheckedChange = { onToggle() },
+            colors = CheckboxDefaults.colors(checkedColor = Lime, checkmarkColor = Ink, uncheckedColor = Muted)
+        )
+        Column(Modifier.weight(1f).padding(top = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(money(c.amount), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = TextMain)
+                Spacer(Modifier.width(8.dp))
+                Text(whenText, style = MaterialTheme.typography.bodySmall, color = Muted)
+            }
+            if (c.maybeLogged) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Looks already added",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Coral,
+                    modifier = Modifier.clip(RoundedCornerShape(6.dp))
+                        .background(Coral.copy(alpha = 0.12f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(c.preview, style = MaterialTheme.typography.bodySmall, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+// "160" for 160.0, "99.5" for 99.5 — how an amount looks in the edit box.
+private fun plainAmount(v: Double): String =
+    if (v % 1.0 == 0.0) v.toLong().toString() else v.toBigDecimal().stripTrailingZeros().toPlainString()
+
+@Composable
 fun EditDialog(e: Expense, onDismiss: () -> Unit, onSave: (Expense) -> Unit, onDelete: () -> Unit) {
+    var amount by remember(e.id) { mutableStateOf(plainAmount(e.amount)) }
+    var extra by remember(e.id) { mutableStateOf(if (e.extra > 0) plainAmount(e.extra) else "") }
+    var note by remember(e.id) { mutableStateOf(e.note.orEmpty()) }
     var category by remember(e.id) { mutableStateOf(e.category) }
+
+    val paid = amount.toDoubleOrNull()
+    val extraValue = if (extra.isBlank()) 0.0 else extra.toDoubleOrNull()
+    val valid = paid != null && paid > 0 && extraValue != null
     val whenText = remember(e.timestamp) {
         SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date(e.timestamp))
     }
     val origin = if (e.source == "manual") "Added by you" else "via ${e.source}"
+
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Panel,
-        title = { Text(money(e.amount), fontWeight = FontWeight.Black, color = TextMain) },
+        title = { Text("Edit spend", fontWeight = FontWeight.Bold, color = TextMain) },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text(
                     listOfNotNull(e.merchant, origin, whenText).joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                     color = Muted
+                )
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    if (e.source == "manual") "Amount" else "Paid via ${e.source}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = TextMain
+                )
+                Spacer(Modifier.height(6.dp))
+                AmountField(amount) { amount = it }
+                Spacer(Modifier.height(10.dp))
+
+                // Money added on top: ₹160 by GPay + ₹100 cash → ₹260 total, split kept.
+                OutlinedTextField(
+                    value = extra,
+                    onValueChange = { s -> if (s.isEmpty() || s.matches(Regex("""\d*\.?\d{0,2}"""))) extra = s },
+                    label = { Text("Extra on top (cash, tip…)") },
+                    prefix = { Text("+ ₹ ", color = Lime) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
+                    colors = kharchaFieldColors(),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (valid && extraValue!! > 0) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Total ${money(paid!! + extraValue)}  (${money(paid)} + ${money(extraValue)})",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Lime
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text("Note (optional)") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
+                    colors = kharchaFieldColors(),
+                    modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(14.dp))
                 Text("Category", style = MaterialTheme.typography.labelLarge, color = TextMain)
@@ -440,31 +764,24 @@ fun EditDialog(e: Expense, onDismiss: () -> Unit, onSave: (Expense) -> Unit, onD
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(e.copy(category = category)) }) {
-                Text("Save", color = Lime, fontWeight = FontWeight.Bold)
+            TextButton(
+                onClick = {
+                    if (valid) {
+                        onSave(
+                            e.copy(
+                                amount = paid!!, extra = extraValue!!,
+                                note = note.ifBlank { null }, category = category
+                            )
+                        )
+                    }
+                },
+                enabled = valid
+            ) {
+                Text("Save", color = if (valid) Lime else Muted, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
             TextButton(onClick = onDelete) { Text("Delete", color = Coral) }
         }
     )
-}
-
-fun startOfMonth(): Long = Calendar.getInstance().apply {
-    set(Calendar.DAY_OF_MONTH, 1)
-    set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-}.timeInMillis
-
-fun startOfDay(t: Long): Long = Calendar.getInstance().apply {
-    timeInMillis = t
-    set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-}.timeInMillis
-
-fun dayLabel(day: Long): String {
-    val today = startOfDay(System.currentTimeMillis())
-    return when (day) {
-        today -> "Today"
-        today - 86_400_000L -> "Yesterday"
-        else -> SimpleDateFormat("EEE, dd MMM", Locale.getDefault()).format(Date(day))
-    }
 }

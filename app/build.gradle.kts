@@ -13,13 +13,16 @@ android {
         applicationId = "app.kharcha"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Signed with the development key so it installs as an update over v1.0.
+            // TODO: switch to a dedicated release keystore (kept out of git).
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     compileOptions {
@@ -52,4 +55,6 @@ dependencies {
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
+
+    testImplementation("junit:junit:4.13.2")
 }

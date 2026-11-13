@@ -25,8 +25,16 @@ No account. No cloud. No ads. Your data never leaves your phone.
 - **No double counting.** A payment seen as both an SMS and a notification is logged once.
 - **Auto-categorise.** Zomato → Food, Uber → Travel, Blinkit → Groceries, and so on.
   Tap any spend to change its category.
-- **Monthly view.** This month's total, a split bar by category, and spends grouped by day.
+- **Month by month.** This month is shown in full: total, a split bar by category, and spends
+  grouped by day. Earlier months fold into one card each that opens to its own breakdown and list.
 - **Back-fills your history.** On first run it imports the debit SMS already in your inbox.
+- **Rescan with a checklist.** Deleted something, or think a spend was missed? *Rescan SMS* lists
+  every bank debit that isn't in Kharcha. Tick the ones you want and they're added back on their
+  real date. Ones the GPay notification probably already logged are marked *Looks already added*.
+- **Add past spends.** Pick any earlier date when adding by hand.
+- **Edit anything, keep the split.** Tap a spend to change its amount, note or category, or add
+  an *extra on top*: ₹160 by GPay + ₹100 in cash shows as **₹260** with "₹160 + ₹100" underneath.
+  Edited SMS spends stay linked to their SMS, so Rescan never offers them again.
 - **CSV export.** Share your whole log as a spreadsheet.
 - **Survives reboots.** The watcher restarts by itself after a restart or an update.
 
@@ -119,6 +127,7 @@ app/src/main/java/app/kharcha/
 ├── MainActivity.kt         Home screen (hero card, setup card, day-grouped list, add sheet)
 ├── QuickAddActivity.kt     The "how much did you spend?" pop-up
 ├── Theme.kt / Components.kt  Colours, categories, shared UI pieces
+├── Months.kt               Month/day grouping and date helpers (unit-tested)
 ├── SmsParser.kt            Debit detection, amount + merchant extraction, Categorizer
 ├── SmsReceiver.kt          Live SMS capture
 ├── SmsScanner.kt           One-time inbox back-fill (dedup-safe)
@@ -142,8 +151,9 @@ Pull requests are welcome. Please keep the app offline and free of trackers.
 
 ## Roadmap
 
+- [x] Month-by-month history
 - [ ] Monthly budgets with a warning when you're close
-- [ ] Month-by-month history and trends
+- [ ] Trends across months
 - [ ] Encrypted backup / restore to a file
 - [ ] Custom categories
 - [ ] Home-screen widget

@@ -35,11 +35,20 @@ interface ExpenseDao {
     @Query("SELECT COUNT(*) FROM expenses WHERE timestamp >= :since")
     suspend fun countSince(since: Long): Int
 
-    // Same SMS already imported? (SMS timestamps are millisecond-exact, so this is safe.)
-    @Query("SELECT COUNT(*) FROM expenses WHERE amount = :amount AND timestamp = :ts AND source = :source")
-    suspend fun countExact(amount: Double, ts: Long, source: String): Int
+    // Any spend of this amount in a time window? Flags SMS the GPay notification already logged.
+    @Query("SELECT COUNT(*) FROM expenses WHERE amount = :amount AND timestamp BETWEEN :from AND :to")
+    suspend fun countNear(amount: Double, from: Long, to: Long): Int
+
+    // Is this SMS already in Kharcha? SMS rows keep the SMS's exact arrival time, so matching on
+    // time alone still works after the user edits the amount (e.g. ₹160 GPay + ₹100 cash = ₹260).
+    @Query("SELECT COUNT(*) FROM expenses WHERE source = 'SMS' AND timestamp = :ts")
+    suspend fun countSmsAt(ts: Long): Int
+
+    // Same amount logged by a payment app or by hand around this time? Then the SMS is a repeat.
+    @Query("SELECT COUNT(*) FROM expenses WHERE source != 'SMS' AND amount = :amount AND timestamp BETWEEN :from AND :to")
+    suspend fun countNearOtherSource(amount: Double, from: Long, to: Long): Int
 
     // Self-heal: keep the first copy of any row that was imported twice.
-    @Query("DELETE FROM expenses WHERE id NOT IN (SELECT MIN(id) FROM expenses GROUP BY amount, timestamp, source)")
+    @Query("DELETE FROM expenses WHERE id NOT IN (SELECT MIN(id) FROM expenses GROUP BY timestamp, source)")
     suspend fun removeDuplicates(): Int
 }
