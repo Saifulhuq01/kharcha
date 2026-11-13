@@ -89,6 +89,11 @@ Where the block doesn't apply, step 2 of Option B on its own is enough.
 
 The card disappears once all four are on, and the header shows **Auto-capture on**.
 
+> **"Payment notifications" greyed out?** On Android 13 and newer, apps installed from a
+> downloaded file get *restricted settings*. Long-press Kharcha → **App info** → **⋮** (top
+> right) → **Allow restricted settings**, then tap **Enable** again. Installing over USB
+> (Option A) doesn't have this restriction.
+
 > **Why not on the Play Store?** Google only allows SMS permissions for default SMS apps,
 > so an app like this has to be installed directly.
 
